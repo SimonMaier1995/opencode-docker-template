@@ -14,7 +14,7 @@ FROM ubuntu:24.04
 ARG DEBIAN_FRONTEND=noninteractive
 
 # === 1. System Tools ===
-RUN apt-get update && apt-get install -y curl wget git build-essential software-properties-common locales sudo nano jq tree texlive texlive-latex-extra texlive-fonts-recommended texlive-xetex && locale-gen en_US.UTF-8 && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y curl wget git git-lfs build-essential software-properties-common locales sudo nano jq tree zip unzip pandoc libgit2-dev libicu-dev texlive texlive-latex-extra texlive-fonts-recommended texlive-xetex && locale-gen en_US.UTF-8 && rm -rf /var/lib/apt/lists/*
 
 ENV LANG=en_US.UTF-8
 ENV LC_ALL=en_US.UTF-8
@@ -23,13 +23,13 @@ ENV LC_ALL=en_US.UTF-8
 RUN apt-get update && apt-get install -y --no-install-recommends software-properties-common dirmngr && wget -qO- https://cloud.r-project.org/bin/linux/ubuntu/marutter_pubkey.asc | tee -a /etc/apt/trusted.gpg.d/cran_ubuntu_key.asc && add-apt-repository "deb https://cloud.r-project.org/bin/linux/ubuntu noble-cran40/" && apt-get update && apt-get install -y --no-install-recommends r-base r-base-dev libcurl4-openssl-dev libssl-dev libxml2-dev libfontconfig1-dev libharfbuzz-dev libfribidi-dev libfreetype6-dev libpng-dev libtiff-dev libjpeg-dev && rm -rf /var/lib/apt/lists/*
 
 # Install core R packages (this step takes ~10-15 minutes)
-RUN Rscript -e "install.packages(c('tidyverse', 'data.table', 'fixest', 'modelsummary', 'haven', 'labelled', 'sandwich', 'lmtest', 'ivreg', 'plm', 'rdrobust', 'rddensity', 'did', 'binsreg', 'marginaleffects', 'patchwork', 'scales', 'rmarkdown', 'knitr', 'bookdown', 'devtools', 'testthat', 'targets', 'here'), repos='https://cloud.r-project.org', Ncpus=4)"
+RUN Rscript -e "install.packages(c('tidyverse', 'data.table', 'arrow', 'duckdb', 'DBI', 'openxlsx', 'janitor', 'fixest', 'modelsummary', 'haven', 'labelled', 'sandwich', 'lmtest', 'ivreg', 'plm', 'estimatr', 'clubSandwich', 'rdrobust', 'rddensity', 'did', 'did2s', 'DRDID', 'HonestDiD', 'MatchIt', 'WeightIt', 'cobalt', 'binsreg', 'marginaleffects', 'patchwork', 'scales', 'gt', 'kableExtra', 'rmarkdown', 'knitr', 'bookdown', 'renv', 'pak', 'devtools', 'testthat', 'targets', 'here'), repos='https://cloud.r-project.org', Ncpus=4)"
 
 # === 3. Python ===
 RUN apt-get update && apt-get install -y python3 python3-pip python3-venv && rm -rf /var/lib/apt/lists/*
 RUN python3 -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
-RUN pip install --no-cache-dir numpy pandas matplotlib jupyter
+RUN pip install --no-cache-dir numpy pandas matplotlib scipy statsmodels linearmodels pyfixest polars pyarrow duckdb openpyxl seaborn plotly jupyterlab
 
 # Python SDKs for AI providers (used by Aider and for building custom agents)
 RUN pip install --no-cache-dir openai anthropic google-genai
@@ -48,7 +48,16 @@ RUN npm install -g @openai/codex
 # === 7. Google Gemini CLI ===
 RUN npm install -g @google/gemini-cli
 
-# === 8. Working Directories ===
+# === 8. Quarto (reproducible HTML, PDF and Word reports) ===
+ARG QUARTO_VERSION=1.10.18
+RUN wget -q "https://github.com/quarto-dev/quarto-cli/releases/download/v${QUARTO_VERSION}/quarto-${QUARTO_VERSION}-linux-amd64.deb" -O /tmp/quarto.deb \
+    && apt-get update \
+    && apt-get install -y /tmp/quarto.deb \
+    && rm -f /tmp/quarto.deb \
+    && rm -rf /var/lib/apt/lists/* \
+    && quarto check install
+
+# === 9. Working Directories ===
 RUN mkdir -p /home/agent/project /home/agent/output /home/agent/data/original /home/agent/data/processed /home/agent/code
 WORKDIR /home/agent
 CMD ["bash"]

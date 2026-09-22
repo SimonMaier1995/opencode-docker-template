@@ -57,7 +57,5 @@ RUN wget -q "https://github.com/quarto-dev/quarto-cli/releases/download/v${QUART
     && rm -rf /var/lib/apt/lists/* \
     && quarto check install
 
-# === 9. Working Directories ===
-RUN mkdir -p /home/agent/project /home/agent/output /home/agent/data/original /home/agent/data/processed /home/agent/code
-WORKDIR /home/agent
+# The project directory is provided at runtime by the project-data Docker volume.
 CMD ["bash"]

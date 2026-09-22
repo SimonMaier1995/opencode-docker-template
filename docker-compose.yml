@@ -12,10 +12,12 @@ services:
       - PATH=/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
       - IS_SANDBOX=1
     volumes:
-      - .:/home/agent/project
+      # Project files are stored in Docker, not mounted from Windows.
+      - project-data:/home/agent/project
       # Stores opencode's login at /root/.local/share/opencode/auth.json.
       - opencode-shared:/root
     working_dir: /home/agent/project
 volumes:
+  project-data:
   opencode-shared:
     external: true

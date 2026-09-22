@@ -9,7 +9,7 @@ services:
     cpus: 4
     pids_limit: 512
     environment:
-      - PATH=/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      - PATH=/opt/venv/bin:/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
       - IS_SANDBOX=1
     volumes:
       # Run Compose from a project folder inside WSL/Ubuntu or the Multipass VM.

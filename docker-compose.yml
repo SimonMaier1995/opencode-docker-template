@@ -13,11 +13,13 @@ services:
       - IS_SANDBOX=1
     volumes:
       # Project files are stored in Docker, not mounted from Windows.
-      - project-data:/home/simon/project_x
+      # Set PROJECT_NAME to choose the directory and isolated project volume.
+      - project-data:/home/simon/${PROJECT_NAME:-project_x}
       # Stores opencode's login at /root/.local/share/opencode/auth.json.
       - opencode-shared:/root
-    working_dir: /home/simon/project_x
+    working_dir: /home/simon/${PROJECT_NAME:-project_x}
 volumes:
   project-data:
+    name: opencode-project-${PROJECT_NAME:-project_x}
   opencode-shared:
     external: true

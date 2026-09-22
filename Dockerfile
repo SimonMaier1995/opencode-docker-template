@@ -1,10 +1,10 @@
 # =============================================================================
 #  Dockerfile — AI Coding Agents Workshop
-#  https://github.com/AlexRieber/Workshops/Docker
+#  Project files are bind-mounted from the Linux project folder by Compose.
 #
 #  Sets up: R, Python, opencode, OpenAI Codex, Google Gemini CLI, Aider
-#  Build:   docker buildx build -t coding-agent .
-#  Run:     docker compose up -d && docker exec -it my-agent bash
+#  Build:   docker build -t coding-agent .
+#  Run:     docker compose up -d && docker compose exec agent bash
 # =============================================================================
 
 # === Base Image: Ubuntu 24.04 LTS ===
@@ -57,5 +57,5 @@ RUN wget -q "https://github.com/quarto-dev/quarto-cli/releases/download/v${QUART
     && rm -rf /var/lib/apt/lists/* \
     && quarto check install
 
-# The project directory is provided at runtime by the project-data Docker volume.
+# The project directory is bind-mounted at runtime by docker-compose.yml.
 CMD ["bash"]

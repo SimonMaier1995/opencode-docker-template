@@ -12,14 +12,12 @@ services:
       - PATH=/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
       - IS_SANDBOX=1
     volumes:
-      # Project files are stored in Docker, not mounted from Windows.
-      # Set PROJECT_NAME to choose the directory and isolated project volume.
-      - project-data:/home/simon/${PROJECT_NAME:-project_x}
+      # Run Compose from a project folder inside WSL/Ubuntu or the Multipass VM.
+      # That Linux folder is the project workspace; do not run from /mnt/c.
+      - .:/home/agent/project
       # Stores opencode's login at /root/.local/share/opencode/auth.json.
       - opencode-shared:/root
-    working_dir: /home/simon/${PROJECT_NAME:-project_x}
+    working_dir: /home/agent/project
 volumes:
-  project-data:
-    name: opencode-project-${PROJECT_NAME:-project_x}
   opencode-shared:
     external: true

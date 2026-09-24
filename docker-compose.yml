@@ -1,7 +1,29 @@
+# AI Coding Agents Workshop — "lite" edition
+#
+# Project files are bind-mounted from the Linux folder that contains this
+# file. Run Compose from inside your project folder (WSL/Ubuntu or the
+# Multipass VM), never from /mnt/c.
+#
+# NOTE: no container_name here on purpose. Every project folder must create
+# its own independent Compose project ("docker compose up" from that folder);
+# a hard-coded name would make them collide.
+
 services:
   agent:
-    image: coding-agent
-    # container_name: xxx (the Docker container name)
+    # One versioned image name used by BOTH workflows (see README.md):
+    #   A) docker compose pull            — the tested published image from GHCR
+    #   B) docker compose build --pull    — built locally from ./Dockerfile
+    # Never use a :latest tag; this RC tag is pinned to the tested candidate.
+    image: ghcr.io/simonmaier1995/opencode-docker-template:lite-0.1.0-rc2
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # Use the image already present locally; only pull when it is missing
+    # (keeps "up" offline-capable after the first pull or build).
+    pull_policy: missing
+    # docker-init as PID 1: reaps zombies left behind by exec commands.
+    init: true
+    working_dir: /home/agent/project
     stdin_open: true
     tty: true
     mem_limit: 16g
@@ -9,15 +31,28 @@ services:
     cpus: 4
     pids_limit: 512
     environment:
-      - PATH=/opt/venv/bin:/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
       - IS_SANDBOX=1
+      # Keep the renv package cache in the project folder (bind-mounted),
+      # not in $HOME, so it survives container recreation and travels with
+      # the project. No project-level .Renviron is needed for this.
+      - RENV_PATHS_CACHE=/home/agent/project/.renv-cache
     volumes:
-      # Run Compose from a project folder inside WSL/Ubuntu or the Multipass VM.
-      # That Linux folder is the project workspace; do not run from /mnt/c.
+      # The workshop project folder, bind-mounted from the host.
       - .:/home/agent/project
-      # Stores opencode's login at /root/.local/share/opencode/auth.json.
-      - opencode-shared:/root
-    working_dir: /home/agent/project
+      # Agent home directory on a named volume. It holds OpenCode's persistent
+      # state and login credentials (~/.local/share/opencode/) and is
+      # intentionally shared between all project folders: log in once, use
+      # every project. It must exist before the first start:
+      #   docker volume create opencode-agent-home
+      # NOTE: the old workshop volume `opencode-shared` belongs to the retired
+      # root-based image and is owned by root. Leave it untouched; it is NOT
+      # compatible with this non-root image. Existing users simply
+      # authenticate again (opencode /connect) inside the new volume.
+      # (Optional migration of old state would require an explicit backup and
+      # manual ownership conversion — see README.md; nothing is migrated or
+      # modified automatically.)
+      - opencode-agent-home:/home/agent
+
 volumes:
-  opencode-shared:
+  opencode-agent-home:
     external: true

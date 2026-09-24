@@ -1,0 +1,35 @@
+# Never commit credentials (Compose reads this file if present)
+.env
+
+# Python: project-local environments and caches (create your own .venv)
+.venv/
+__pycache__/
+*.py[cod]
+
+# renv: caches and project-local libraries are machine-specific.
+# renv.lock stays trackable — it is the reproducibility record.
+# (renv's cache location is set by the Compose service, no .Renviron needed.)
+.renv-cache/
+renv/library/
+renv/staging/
+
+# .Renviron can contain user-specific configuration or secrets
+.Renviron
+
+# R session artifacts
+.Rhistory
+.RData
+.Rproj.user/
+
+# Generated output
+_site/
+.quarto/
+
+# Node (if a project pulls npm packages)
+node_modules/
+
+# Editor / OS metadata
+.vscode/
+.idea/
+*.swp
+.DS_Store

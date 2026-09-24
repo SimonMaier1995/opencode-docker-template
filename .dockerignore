@@ -1,0 +1,8 @@
+# Deny-everything allowlist. The build context is limited to exactly the
+# files listed with "!" below — nothing else from your project folder can
+# enter a Docker build: no datasets, credentials, .env, .Renviron, .git,
+# caches, or generated artifacts. (.dockerignore affects "docker build"
+# contexts only, not the runtime bind mount of the project folder.)
+**
+!Dockerfile
+!.dockerignore

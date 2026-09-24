@@ -1,0 +1,265 @@
+# =============================================================================
+# Native multiarchitecture publication workflow for the lite RC image.
+#
+# Trigger: pushing a git tag matching "lite-0.1.0-rc*" (e.g. lite-0.1.0-rc2).
+# Ordinary branch pushes NEVER trigger this workflow.
+#
+# Strategy: each architecture is built AND smoke-tested on a NATIVE GitHub
+# runner (linux/amd64 on ubuntu-24.04, linux/arm64 on ubuntu-24.04-arm) —
+# no QEMU and no emulation anywhere. Each native job pushes its
+# architecture-suffixed image tag (<tag>-amd64 / <tag>-arm64) only after its
+# smoke tests pass. The final manifest job runs only if BOTH native jobs
+# succeeded, combines the two tags into one OCI multiarchitecture tag, and
+# verifies the resulting index contains exactly linux/amd64 and linux/arm64.
+# A failed architecture test therefore blocks the combined RC tag.
+#
+# This workflow never publishes a "latest" tag and never creates a release;
+# it publishes exactly the pushed git tag as the image tag.
+#
+# Auth: the repository's built-in GITHUB_TOKEN only (no PAT required).
+# NOTE: the first GHCR package created this way starts PRIVATE by default.
+# Its visibility must be changed to public in the GitHub package settings
+# before students can pull anonymously.
+#
+# All third-party actions are pinned to full commit SHAs; the version in the
+# trailing comment is the release tag the SHA was resolved from.
+# =============================================================================
+
+name: publish-lite-rc
+
+on:
+  push:
+    tags:
+      - 'lite-0.1.0-rc*'   # RC tags only; branch pushes do not match
+
+# Least-privilege token for this workflow: read the tagged source,
+# write container packages to GHCR. Nothing else.
+permissions:
+  contents: read
+  packages: write
+
+# Serialize publications per git tag; never cancel a publication that is
+# already in flight for the same tag.
+concurrency:
+  group: "publish-${{ github.ref_name }}"
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ghcr.io/simonmaier1995/opencode-docker-template
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  # --------------------------------------------------------------------------
+  # One native build/test/push job per architecture (two matrix legs =
+  # two jobs, each on its own architecture-matched runner).
+  # --------------------------------------------------------------------------
+  build-test-push:
+    name: "Native ${{ matrix.arch }}: build, smoke test, push"
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      # Run BOTH architectures even if one fails, so the failure is visible.
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64                 # architecture suffix for the image tag
+            runner: ubuntu-24.04        # native AMD64 runner
+            platform: linux/amd64       # docker platform
+            uname_arch: x86_64          # expected `uname -m`
+          - arch: arm64
+            runner: ubuntu-24.04-arm    # native ARM64 runner (no QEMU)
+            platform: linux/arm64
+            uname_arch: aarch64
+    steps:
+      - name: Check out the exact tagged commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.ref }}
+
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build single-platform image (clean, loaded locally, not pushed yet)
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          if [[ ! "${tag}" =~ ^lite-0\.1\.0-rc[0-9]+$ ]]; then
+            echo "ERROR: refusing to publish from unexpected tag '${tag}'"
+            exit 1
+          fi
+          arch_tag="${IMAGE_NAME}:${tag}-${{ matrix.arch }}"
+          echo "Building ${arch_tag} for ${{ matrix.platform }} on native runner"
+          docker buildx build \
+            --platform "${{ matrix.platform }}" \
+            --tag "${arch_tag}" \
+            --no-cache \
+            --provenance=false \
+            --sbom=false \
+            --load \
+            .
+          # --no-cache: clean, reproducible-from-scratch build as tested locally.
+          # --provenance/--sbom off: keeps the pushed arch image a plain
+          #   single-platform manifest so the final index contains exactly the
+          #   two platform manifests (verified in the manifest job).
+
+      - name: Architecture-native smoke tests (image default user)
+        run: |
+          set -euo pipefail
+          img="${IMAGE_NAME}:${GITHUB_REF_NAME}-${{ matrix.arch }}"
+
+          echo "== architecture =="
+          got="$(docker run --rm "${img}" uname -m)"
+          [ "${got}" = "${{ matrix.uname_arch }}" ] \
+            || { echo "FAIL: uname -m is '${got}', expected '${{ matrix.uname_arch }}'"; exit 1; }
+
+          echo "== default user: agent, UID/GID 1000 =="
+          [ "$(docker run --rm "${img}" id -un)" = "agent" ] \
+            || { echo "FAIL: default user is not 'agent'"; exit 1; }
+          [ "$(docker run --rm "${img}" id -u)" = "1000" ] \
+            || { echo "FAIL: default UID is not 1000"; exit 1; }
+          [ "$(docker run --rm "${img}" id -g)" = "1000" ] \
+            || { echo "FAIL: default GID is not 1000"; exit 1; }
+
+          echo "== HOME =="
+          [ "$(docker run --rm "${img}" bash -c 'echo "${HOME}"')" = "/home/agent" ] \
+            || { echo "FAIL: HOME is not /home/agent"; exit 1; }
+
+          echo "== writable non-root HOME and project directory =="
+          docker run --rm "${img}" bash -c \
+            'set -e; touch /home/agent/.write-probe; touch /home/agent/project/.write-probe; echo "HOME and project writable as UID $(id -u)"'
+
+          echo "== exact tool versions =="
+          docker run --rm "${img}" bash -c 'R --version | head -1 | grep -F "R version 4.6.1"' \
+            || { echo "FAIL: R is not 4.6.1"; exit 1; }
+          docker run --rm "${img}" Rscript -e 'stopifnot(packageVersion("renv") == "1.2.4"); cat("renv 1.2.4 OK\n")' \
+            || { echo "FAIL: renv is not 1.2.4"; exit 1; }
+          docker run --rm "${img}" bash -c 'python3 --version | grep -Fx "Python 3.12.3"' \
+            || { echo "FAIL: python3 is not 3.12.3"; exit 1; }
+          docker run --rm "${img}" bash -c 'node --version | grep -Fx "v24.21.0"' \
+            || { echo "FAIL: node is not v24.21.0"; exit 1; }
+          docker run --rm "${img}" bash -c 'npm --version | grep -Fx "11.19.0"' \
+            || { echo "FAIL: npm is not 11.19.0"; exit 1; }
+          docker run --rm "${img}" bash -c 'opencode --version | grep -Fx "1.18.32"' \
+            || { echo "FAIL: opencode is not 1.18.32"; exit 1; }
+          docker run --rm "${img}" bash -c 'quarto --version | grep -Fx "1.10.18"' \
+            || { echo "FAIL: quarto is not 1.10.18"; exit 1; }
+
+          echo "== OpenCode --help =="
+          docker run --rm "${img}" opencode --help > /dev/null \
+            || { echo "FAIL: opencode --help failed"; exit 1; }
+
+          echo "== minimal Quarto HTML render =="
+          qmd='---
+          title: "RC smoke test"
+          format: html
+          ---
+
+          Smoke test document.
+          '
+          printf '%s\n' "${qmd}" | docker run --rm -i "${img}" bash -c \
+            'set -e; cd /tmp; cat > doc.qmd; quarto render doc.qmd --to html 2>&1 | grep -F "Output created: doc.html"' \
+            || { echo "FAIL: Quarto HTML render failed"; exit 1; }
+
+          echo "== minimal Quarto DOCX render =="
+          printf '%s\n' "${qmd}" | docker run --rm -i "${img}" bash -c \
+            'set -e; cd /tmp; cat > doc.qmd; quarto render doc.qmd --to docx 2>&1 | grep -F "Output created: doc.docx"' \
+            || { echo "FAIL: Quarto DOCX render failed"; exit 1; }
+
+          echo "== expected absence of a TeX/PDF engine =="
+          docker run --rm "${img}" bash -c \
+            'set -e; for e in pdflatex xelatex lualatex tectonic latexmk; do if command -v "${e}" >/dev/null 2>&1; then echo "FAIL: unexpected TeX engine ${e}"; exit 1; fi; done; echo "no TeX engines on PATH"' \
+            || { echo "FAIL: TeX engine check"; exit 1; }
+          docker run --rm "${img}" bash -c \
+            'set -e; n="$(dpkg -l 2>/dev/null | grep -c "^ii  texlive" || true)"; [ "${n}" -eq 0 ] && echo "no texlive packages installed"' \
+            || { echo "FAIL: texlive packages installed"; exit 1; }
+
+          echo "All ${{ matrix.arch }} smoke tests passed."
+
+      - name: Push architecture-specific image
+        run: |
+          set -euo pipefail
+          arch_tag="${IMAGE_NAME}:${GITHUB_REF_NAME}-${{ matrix.arch }}"
+          echo "Publishing ${arch_tag}"
+          docker push "${arch_tag}"
+
+  # --------------------------------------------------------------------------
+  # Combined multiarchitecture tag. "needs" requires BOTH matrix legs of the
+  # native job to succeed; if any architecture test fails, this job — and
+  # therefore the combined RC tag — is never created.
+  # --------------------------------------------------------------------------
+  manifest:
+    name: Combine into one multiarchitecture RC tag
+    needs: build-test-push
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create the multiarchitecture tag from the two architecture tags
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          if [[ ! "${tag}" =~ ^lite-0\.1\.0-rc[0-9]+$ ]]; then
+            echo "ERROR: refusing to publish from unexpected tag '${tag}'"
+            exit 1
+          fi
+          final="${IMAGE_NAME}:${tag}"
+          echo "Creating ${final} from:"
+          echo "  ${final}-amd64"
+          echo "  ${final}-arm64"
+          # Composes one OCI image index referencing the two already-published
+          # single-platform manifests. No floating tag such as "latest" is
+          # created; only the pushed git tag is published.
+          docker buildx imagetools create \
+            --tag "${final}" \
+            "${final}-amd64" \
+            "${final}-arm64"
+
+      - name: Verify index contains exactly linux/amd64 and linux/arm64
+        run: |
+          set -euo pipefail
+          final="${IMAGE_NAME}:${GITHUB_REF_NAME}"
+          docker buildx imagetools inspect --raw "${final}" > index.json
+          python3 - <<'PY'
+          import json
+          import sys
+
+          with open("index.json") as fh:
+              index = json.load(fh)
+          platforms = sorted(
+              "{}/{}".format(m["platform"]["os"], m["platform"]["architecture"])
+              for m in index.get("manifests", [])
+          )
+          print("Platforms in published index:", platforms)
+          expected = ["linux/amd64", "linux/arm64"]
+          if platforms != expected:
+              sys.exit("FAIL: expected exactly {}, found {}".format(expected, platforms))
+          print("OK: index contains exactly linux/amd64 and linux/arm64")
+          PY
+
+      - name: Print the final immutable image digest
+        run: |
+          set -euo pipefail
+          final="${IMAGE_NAME}:${GITHUB_REF_NAME}"
+          digest="$(docker buildx imagetools inspect "${final}" --format '{{.Manifest.Digest}}')"
+          case "${digest}" in
+            sha256:*) ;;
+            *) echo "FAIL: unexpected digest value '${digest}'"; exit 1 ;;
+          esac
+          echo "Published multiarchitecture image: ${final}"
+          echo "Immutable digest: ${final}@${digest}"
+          echo "::notice::Published ${final}@${digest}"
